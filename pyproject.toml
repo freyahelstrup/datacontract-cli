@@ -6,6 +6,7 @@ readme = "README.md"
 authors = [
   { name = "Jochen Christ", email = "jochen.christ@innoq.com" },
   { name = "Stefan Negele", email = "stefan.negele@innoq.com" },
+  { name = "Freya Helstrup", email = "freyahelstrup@me.com" },
 ]
 classifiers = [
   "Programming Language :: Python :: 3",
