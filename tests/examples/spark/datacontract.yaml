@@ -13,7 +13,10 @@ info:
     url: https://teams.microsoft.com/l/channel/acme/checkout
 servers:
   production:
-    type: spark
+    type: databricks
+    host: none
+    catalog: none
+    schema: none
 terms:
   usage: >
     Data can be used for reports, analytics and machine learning use cases.
@@ -51,20 +54,6 @@ models:
         type: string
         format: email
         required: true
-  line_items:
-    description: A single article that is part of an order.
-    type: table
-    fields:
-      lines_item_id:
-        type: string
-        description: Primary key of the lines_item_id table
-        required: true
-        unique: true
-      order_id:
-        $ref: '#/definitions/order_id'
-      sku:
-        description: The purchased article number
-        $ref: '#/definitions/sku'
 definitions:
   order_id:
     domain: checkout
@@ -76,16 +65,6 @@ definitions:
     example: 243c25e5-a081-43a9-aeab-6d5d5b6cb5e2
     pii: true
     classification: restricted
-  sku:
-    domain: inventory
-    name: sku
-    title: Stock Keeping Unit
-    type: text
-    pattern: ^[A-Za-z0-9]{8,14}$
-    example: "96385074"
-    description: |
-      A Stock Keeping Unit (SKU) is an internal unique identifier for an article. 
-      It is typically associated with an article's barcode, such as the EAN/GTIN.
 examples:
   - type: csv # csv, json, yaml, custom
     model: orders
@@ -101,20 +80,6 @@ examples:
       "1008","2023-09-02T17:40:00Z",3600
       "1009","2023-09-01T09:25:00Z",3100
       "1010","2023-08-31T22:50:00Z",2700
-  - type: csv
-    model: line_items
-    data: |-
-      lines_item_id,order_id,sku
-      "1","1001","5901234123457"
-      "2","1001","4001234567890"
-      "3","1002","5901234123457"
-      "4","1002","2001234567893"
-      "5","1003","4001234567890"
-      "6","1003","5001234567892"
-      "7","1004","5901234123457"
-      "8","1005","2001234567893"
-      "9","1005","5001234567892"
-      "10","1005","6001234567891"
 quality:
   type: SodaCL   # data quality check format: SodaCL, montecarlo, custom
   specification: # expressed as string or inline yaml or via "$ref: checks.yaml"
@@ -122,6 +87,3 @@ quality:
       - freshness(order_timestamp) < 24h
       - row_count >= 5000
       - duplicate_count(order_id) = 0
-    checks for line_items:
-      - values in (order_id) must exist in orders (order_id)
-      - row_count >= 5000

@@ -1,10 +1,9 @@
 import logging
 
-import pytest
-
 from datacontract.data_contract import DataContract
 
 from pyspark.sql import SparkSession
+from pyspark.sql.types import *
 
 logging.basicConfig(level=logging.DEBUG, force=True)
 
@@ -18,7 +17,14 @@ def test_examples_spark():
     
     # Read data
     path = "examples/spark/data/orders-1.json"
-    df = spark.read.json(path)
+    schema = StructType([
+      StructField("order_id", StringType(), True),
+      StructField("order_timestamp", TimestampType(), True),
+      StructField("order_total", LongType(), True),
+      StructField("customer_id", StringType(), True),
+      StructField("customer_email_address", StringType(), True)]
+    )
+    df = spark.read.schema(schema).json(path)
 
     # Create view
     df.createOrReplaceTempView(dataset_name)

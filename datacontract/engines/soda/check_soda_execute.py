@@ -60,7 +60,7 @@ def check_soda_execute(run: Run, data_contract: DataContractSpecification, serve
             logging.info("Use Spark to connect to data source")
             scan.add_spark_session(spark, data_source_name=server.type)
             scan.set_data_source_name(server.type)
-            spark.sql(f"USE {server.catalog}.{server.schema_}")
+            #spark.sql(f"USE {server.catalog}.{server.schema_}") # TODO: How to do this without ruining other databricks use cases
         else:
             soda_configuration_str = to_databricks_soda_configuration(server)
             scan.add_configuration_yaml_str(soda_configuration_str)
@@ -71,13 +71,6 @@ def check_soda_execute(run: Run, data_contract: DataContractSpecification, serve
         read_kafka_topic(spark, data_contract, server, tmp_dir)
         scan.add_spark_session(spark, data_source_name=server.type)
         scan.set_data_source_name(server.type)
-    elif server.type == "spark":
-        if spark is None:
-            spark = create_spark_session(tmp_dir)
-        logging.info("Use Spark to connect to data source")
-        scan.add_spark_session(spark, data_source_name=server.type)
-        scan.set_data_source_name(server.type)
-
     else:
         run.checks.append(Check(
             type="general",
