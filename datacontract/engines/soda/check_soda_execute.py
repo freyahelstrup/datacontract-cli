@@ -56,15 +56,36 @@ def check_soda_execute(run: Run, data_contract: DataContractSpecification, serve
         scan.add_configuration_yaml_str(soda_configuration_str)
         scan.set_data_source_name(server.type)
     elif server.type == "databricks":
-        if spark is not None:
-            logging.info("Use Spark to connect to data source")
-            scan.add_spark_session(spark, data_source_name=server.type)
-            scan.set_data_source_name(server.type)
-            #spark.sql(f"USE {server.catalog}.{server.schema_}") # TODO: How to do this without ruining other databricks use cases
-        else:
-            soda_configuration_str = to_databricks_soda_configuration(server)
-            scan.add_configuration_yaml_str(soda_configuration_str)
-            scan.set_data_source_name(server.type)
+        # if spark is not None:
+        #     logging.info("Use Spark to connect to data source")
+        #     scan.add_spark_session(spark, data_source_name=server.type)
+        #     scan.set_data_source_name(server.type)
+        #     spark.sql(f"USE {server.catalog}.{server.schema_}")
+        # else:
+        #     soda_configuration_str = to_databricks_soda_configuration(server)
+        #     scan.add_configuration_yaml_str(soda_configuration_str)
+        #     scan.set_data_source_name(server.type)
+    # elif server.type == "spark": #TODO: Use own server.type
+        if spark is None:
+            spark = create_spark_session(tmp_dir)   
+        logging.info("Use Spark to connect to data source")
+        data_location = server.host # TODO: Use different naming like 'location'
+        schema = spark.read \
+                    .format("csv") \
+                    .option("header", True) \
+                    .option("inferSchema", True) \
+                    .load(data_location) \
+                    .limit(10) \
+                    .schema
+        df = spark.read \
+                    .format("csv") \
+                    .option("header", True) \
+                    .schema(schema) \
+                    .load(data_location) 
+        model = data_contract.models[0] # TODO: How to find corresponding model name?
+        df.createOrReplaceTempView(model) 
+        scan.add_spark_session(spark, data_source_name=server.type)
+        scan.set_data_source_name(server.type)
     elif server.type == "kafka":
         if spark is None:
             spark = create_spark_session(tmp_dir)
