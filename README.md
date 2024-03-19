@@ -83,17 +83,20 @@ $ datacontract test --examples datacontract.yaml
 # find differences between to data contracts (Coming Soon)
 $ datacontract diff datacontract-v1.yaml datacontract-v2.yaml
 
-# fail pipeline on breaking changes  (Coming Soon)
+# find differences between to data contracts categorized into error, warning, and info.
+$ datacontract changelog datacontract-v1.yaml datacontract-v2.yaml
+
+# fail pipeline on breaking changes. Uses changelog internally and showing only error and warning.
 $ datacontract breaking datacontract-v1.yaml datacontract-v2.yaml
 
-# export model as jsonschema
+# export model as jsonschema (other formats: avro, dbt, dbt-sources, dbt-staging-sql, jsonschema, odcs, rdf, sql (coming soon), sodacl, terraform)
 $ datacontract export --format jsonschema datacontract.yaml
-
-# export model as dbt
-$ datacontract export --format dbt datacontract.yaml
 
 # import sql
 $ datacontract import --format sql --source my_ddl.sql
+
+# import avro
+$ datacontract import --format avro --source avro_schema.avsc
 
 # import protobuf as model (Coming Soon)
 $ datacontract import --format protobuf --source my_protobuf_file.proto datacontract.yaml
@@ -120,9 +123,35 @@ $ EXPORT DATAMESH_MANAGER_API_KEY=xxx
 $ datacontract test https://demo.datamesh-manager.com/demo279750347121/datacontracts/4df9d6ee-e55d-4088-9598-b635b2fdcbbc/datacontract.yaml --server production --publish
 ```
 
+## Scenario: Integration with OpenTelemetry
+
+If you use OpenTelemetry, you can use the data contract URL and append the `--publish-to-opentelemetry` option to send the test results to your OLTP-compatible instance, e.g., Prometheus.
+
+The metric name is "datacontract.cli.test.result" and it uses the following encoding for the result:
+
+| datacontract.cli.test.result | Description                           |
+|-------|---------------------------------------|
+| 0     | test run passed, no warnings          |
+| 1     | test run has warnings                 |
+| 2     | test run failed                       |
+| 3     | test run not possible due to an error |
+| 4     | test status unknown                   |
 
 
+```bash
+# Fetch current data contract, execute tests on production, and publish result to open telemetry
+$ EXPORT OTEL_SERVICE_NAME=datacontract-cli
+$ EXPORT OTEL_EXPORTER_OTLP_ENDPOINT=https://YOUR_ID.apm.westeurope.azure.elastic-cloud.com:443
+$ EXPORT OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20secret (Optional, when using SaaS Products)
+$ EXPORT OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf (Optional, because it is the default value)
+# Send to OpenTelemetry
+$ datacontract test https://demo.datamesh-manager.com/demo279750347121/datacontracts/4df9d6ee-e55d-4088-9598-b635b2fdcbbc/datacontract.yaml --server production --publish-to-opentelemetry
+```
 
+Current limitations:
+- no gRPC support
+- currently, only ConsoleExporter and OTLP Exporter
+- Metrics only, no logs yet (but loosely planned)
 
 ## Installation
 
@@ -411,20 +440,34 @@ datacontract export --format dbt
 
 Available export options:
 
-| Type               | Description                                             | Status |
-|--------------------|---------------------------------------------------------|--------|
-| `jsonschema`       | Export to JSON Schema                                   | ✅      | 
-| `odcs`             | Export to Open Data Contract Standard (ODCS)            | ✅      | 
-| `sodacl`           | Export to SodaCL quality checks in YAML format          | ✅      |
-| `dbt`              | Export to dbt models in YAML format                     | ✅      |
-| `dbt-sources`      | Export to dbt sources in YAML format                    | ✅      |
-| `dbt-staging-sql`  | Export to dbt staging SQL models                        | ✅      |
-| `rdf`              | Export data contract to RDF representation in N3 format | ✅      |
-| `avro`             | Export to AVRO models                                   | ✅      |
-| `protobuf`         | Export to Protobuf                                      | ✅      |
-| `pydantic`         | Export to pydantic models                               | TBD    |
-| `sql`              | Export to SQL DDL                                       | TBD    |
-| Missing something? | Please create an issue on GitHub                        | TBD    |
+| Type                 | Description                                             | Status |
+|----------------------|---------------------------------------------------------|--------|
+| `jsonschema`         | Export to JSON Schema                                   | ✅      | 
+| `odcs`               | Export to Open Data Contract Standard (ODCS)            | ✅      | 
+| `sodacl`             | Export to SodaCL quality checks in YAML format          | ✅      |
+| `dbt`                | Export to dbt models in YAML format                     | ✅      |
+| `dbt-sources`        | Export to dbt sources in YAML format                    | ✅      |
+| `dbt-staging-sql`    | Export to dbt staging SQL models                        | ✅      |
+| `rdf`                | Export data contract to RDF representation in N3 format | ✅      |
+| `avro`               | Export to AVRO models                                   | ✅      |
+| `protobuf`           | Export to Protobuf                                      | ✅      |
+| `terraform`          | Export to terraform resources                           | ✅      |
+| `sql`                | Export to SQL DDL                                       | ✅      |
+| `sql-query`          | Export to SQL Query                                     | ✅      |
+| `great-expectations` | Export to Great Expectations Suites in JSON Format      | ✅      |
+| `pydantic`           | Export to pydantic models                               | TBD    |
+| Missing something?   | Please create an issue on GitHub                        | TBD    |
+
+#### Great Expectations
+The export function transforms a specified data contract into a comprehensive Great Expectations JSON suite. 
+If the contract includes multiple models, you need to specify the names of the model you wish to export.
+```shell
+datacontract  export datacontract.yaml --format great-expectations --model orders 
+```
+The export creates a list of expectations by utilizing:
+
+- The data from the Model definition with a fixed mapping
+- The expectations provided in the quality field for each model (find here the expectations gallery https://greatexpectations.io/expectations/)
 
 #### RDF
 
@@ -463,7 +506,7 @@ Available import options:
 |--------------------|------------------------------------------------|---------|
 | `sql`              | Import from SQL DDL                            | ✅       | 
 | `protobuf`         | Import from Protobuf schemas                   | TBD     |
-| `avro`             | Import from AVRO schemas                       | TBD     |
+| `avro`             | Import from AVRO schemas                       | ✅     |
 | `jsonschema`       | Import from JSON Schemas                       | TBD     |
 | `dbt`              | Import from dbt models                         | TBD     |
 | `odcs`             | Import from Open Data Contract Standard (ODCS) | TBD     |

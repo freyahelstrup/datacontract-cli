@@ -100,6 +100,8 @@ def test(
         help="Run the schema and quality tests on the example data within the data contract.")] = None,
     publish: Annotated[str, typer.Option(
         help="The url to publish the results after the test")] = None,
+    publish_to_opentelemetry: Annotated[bool, typer.Option(
+        help="Publish the results to opentelemetry. Use environment variables to configure the OTLP endpoint, headers, etc.")] = False,
     logs: Annotated[bool, typer.Option(
         help="Print logs")] = False,
 ):
@@ -109,8 +111,13 @@ def test(
     print(f"Testing {location}")
     if server == "all":
         server = None
-    run = DataContract(data_contract_file=location, schema_location=schema, publish_url=publish, server=server,
-                       examples=examples).test()
+    run = DataContract(data_contract_file=location,
+                       schema_location=schema,
+                       publish_url=publish,
+                       publish_to_opentelemetry=publish_to_opentelemetry,
+                       server=server,
+                       examples=examples,
+                       ).test()
     if logs:
         _print_logs(run)
     _handle_result(run)
@@ -126,13 +133,22 @@ class ExportFormat(str, Enum):
     rdf = "rdf"
     avro = "avro"
     protobuf = "protobuf"
+    great_expectations = "great-expectations"
+    terraform = "terraform"
+    avro_idl = "avro-idl"
+    sql = "sql"
+    sql_query = "sql-query"
 
 
 @app.command()
 def export(
     format: Annotated[ExportFormat, typer.Option(help="The export format.")],
     server: Annotated[str, typer.Option(help="The server name to export.")] = None,
-    rdf_base: Annotated[Optional[str], typer.Option(help="[rdf] The base URI used to generate the RDF graph.")] = None,
+    model: Annotated[str, typer.Option(help="Use the key of the model in the data contract yaml file "
+                                            "to refer to a model, e.g., `orders`, or `all` for all "
+                                            "models (default).")] = "all",
+    rdf_base: Annotated[Optional[str], typer.Option(help="[rdf] The base URI used to generate the RDF graph.", rich_help_panel="RDF Options")] = None,
+    sql_server_type: Annotated[Optional[str], typer.Option(help="[sql] The server type to determine the sql dialect. By default, it uses 'auto' to automatically detect the sql dialect via the specified servers in the data contract.", rich_help_panel="SQL Options")] = "auto",
     location: Annotated[
         str, typer.Argument(help="The location (url or path) of the data contract yaml.")] = "datacontract.yaml",
 ):
@@ -140,12 +156,18 @@ def export(
     Convert data contract to a specific format. Prints to stdout.
     """
     # TODO exception handling
-    result = DataContract(data_contract_file=location, server=server).export(format, rdf_base)
+    result = DataContract(data_contract_file=location, server=server).export(
+        export_format=format,
+        model=model,
+        rdf_base=rdf_base,
+        sql_server_type=sql_server_type,
+    )
     print(result)
 
 
 class ImportFormat(str, Enum):
     sql = "sql"
+    avro = "avro"
 
 
 @app.command(name="import")
@@ -178,9 +200,55 @@ def breaking(
             data_contract_file=location_new,
             inline_definitions=True
         ))
-    print(str(result))
+
+    print(result.breaking_str())
+
     if not result.passed_checks():
         raise typer.Exit(code=1)
+
+
+@app.command()
+def changelog(
+    location_old: Annotated[str, typer.Argument(help="The location (url or path) of the old data contract yaml.")],
+    location_new: Annotated[str, typer.Argument(help="The location (url or path) of the new data contract yaml.")],
+):
+    """
+    Generate a changelog between data contracts. Prints to stdout.
+    """
+
+    # TODO exception handling
+    result = DataContract(
+        data_contract_file=location_old,
+        inline_definitions=True
+    ).changelog(
+        DataContract(
+            data_contract_file=location_new,
+            inline_definitions=True
+        ))
+
+    print(result.changelog_str())
+
+
+@app.command()
+def diff(
+    location_old: Annotated[str, typer.Argument(help="The location (url or path) of the old data contract yaml.")],
+    location_new: Annotated[str, typer.Argument(help="The location (url or path) of the new data contract yaml.")],
+):
+    """
+    PLACEHOLDER. Currently works as 'changelog' does.
+    """
+
+    # TODO change to diff output, not the changelog entries
+    result = DataContract(
+        data_contract_file=location_old,
+        inline_definitions=True
+    ).changelog(
+        DataContract(
+            data_contract_file=location_new,
+            inline_definitions=True
+        ))
+
+    print(result.changelog_str())
 
 
 def _handle_result(run):
