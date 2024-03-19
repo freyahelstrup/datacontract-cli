@@ -28,6 +28,14 @@ def to_checks(model_key, model_value, check_types: bool):
             checks.append(check_field_required(field_name))
         if field.unique:
             checks.append(check_field_unique(field_name))
+        if field.minimum is not None:
+            checks.append(check_field_minimum(field_name, field.minimum))
+        if field.maximum is not None:
+            checks.append(check_field_maximum(field_name, field.maximum))
+        if field.exclusiveMinimum is not None:
+            checks.append(check_field_exclusive_minimum(field_name, field.exclusiveMinimum))
+        if field.exclusiveMaximum is not None:
+            checks.append(check_field_exclusive_maximum(field_name, field.exclusiveMaximum))
 
     return f"checks for {model_key}", checks
 
@@ -70,6 +78,38 @@ def check_field_unique(field_name):
     return {
         f'duplicate_count({field_name}) = 0': {
             "name": f"Check that unique field {field_name} has no duplicate values"
+        }
+    }
+
+
+def check_field_minimum(field_name, minimum_value):
+    return {
+        f"min({field_name}) >= {minimum_value}": {
+            "name": f"Check that field {field_name} has only values >= {minimum_value}"
+        }
+    }
+
+
+def check_field_maximum(field_name, maximum_value):
+    return {
+        f"max({field_name}) <= {maximum_value}": {
+            "name": f"Check that field {field_name} has only values <= {maximum_value}"
+        }
+    }
+
+
+def check_field_exclusive_minimum(field_name, exclusive_minimum_value):
+    return {
+        f"min({field_name}) > {exclusive_minimum_value}": {
+            "name": f"Check that field {field_name} has only values > {exclusive_minimum_value}"
+        }
+    }
+
+
+def check_field_exclusive_maximum(field_name, exclusive_maximum_value):
+    return {
+        f"max({field_name}) < {exclusive_maximum_value}": {
+            "name": f"Check that field {field_name} has only values < {exclusive_maximum_value}"
         }
     }
 
