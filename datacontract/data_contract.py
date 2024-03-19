@@ -12,19 +12,26 @@ from datacontract.engines.fastjsonschema.check_jsonschema import \
     check_jsonschema
 from datacontract.engines.soda.check_soda_execute import check_soda_execute
 from datacontract.export.avro_converter import to_avro_schema, to_avro_schema_json
+from datacontract.export.avro_idl_converter import to_avro_idl
 from datacontract.export.dbt_converter import to_dbt_models_yaml, \
     to_dbt_sources_yaml, to_dbt_staging_sql
 from datacontract.export.jsonschema_converter import to_jsonschema, to_jsonschema_json
 from datacontract.export.odcs_converter import to_odcs_yaml
 from datacontract.export.protobuf_converter import to_protobuf
+from datacontract.export.great_expectations_converter import to_great_expectations
 from datacontract.export.rdf_converter import to_rdf, to_rdf_n3
+from datacontract.export.rdf_converter import to_rdf_n3
 from datacontract.export.sodacl_converter import to_sodacl_yaml
+from datacontract.imports.avro_importer import import_avro
+from datacontract.export.sql_converter import to_sql_ddl, to_sql_query
+from datacontract.export.terraform_converter import to_terraform
 from datacontract.imports.sql_importer import import_sql
 from datacontract.integration.publish_datamesh_manager import \
     publish_datamesh_manager
+from datacontract.integration.publish_opentelemetry import publish_opentelemetry
 from datacontract.lint import resolve
 
-from datacontract.model.breaking_change import BreakingChanges, BreakingChange
+from datacontract.model.breaking_change import BreakingChanges, BreakingChange, Severity
 from datacontract.lint.linters.description_linter import DescriptionLinter
 from datacontract.lint.linters.example_model_linter import ExampleModelLinter
 from datacontract.lint.linters.valid_constraints_linter import ValidFieldConstraintsLinter
@@ -40,6 +47,23 @@ from datacontract.model.run import \
     Run, Check
 
 
+def _determine_sql_server_type(data_contract, sql_server_type):
+    if sql_server_type == "auto":
+        if data_contract.servers is None or len(data_contract.servers) == 0:
+            raise RuntimeError(f"Export with server_type='auto' requires servers in the data contract.")
+
+        server_types = set([server.type for server in data_contract.servers.values()])
+        if "snowflake" in server_types:
+            return "snowflake"
+        elif "postgres" in server_types:
+            return "postgres"
+        else:
+            # default to snowflake dialect
+            return "snowflake"
+    else:
+        return sql_server_type
+
+
 class DataContract:
     def __init__(
         self,
@@ -50,6 +74,7 @@ class DataContract:
         server: str = None,
         examples: bool = False,
         publish_url: str = None,
+        publish_to_opentelemetry: bool = False,
         spark: str = None,
         inline_definitions: bool = False,
     ):
@@ -60,6 +85,7 @@ class DataContract:
         self._server = server
         self._examples = examples
         self._publish_url = publish_url
+        self._publish_to_opentelemetry = publish_to_opentelemetry
         self._spark = spark
         self._inline_definitions = inline_definitions
         self.all_linters = {
@@ -77,7 +103,7 @@ class DataContract:
     def init(cls, template: str = "https://datacontract.com/datacontract.init.yaml") -> DataContractSpecification:
         return resolve.resolve_data_contract(data_contract_location=template)
 
-    def lint(self, enabled_linters: typing.Union[str, set[str]]="all") -> Run:
+    def lint(self, enabled_linters: typing.Union[str, set[str]] = "all") -> Run:
         """Lint the data contract by deserializing the contract and checking the schema, as well as calling the configured linters.
 
           enabled_linters can be either "all" or "none", or a set of linter IDs. The "schema" linter is always enabled, even with enabled_linters="none".
@@ -100,7 +126,7 @@ class DataContract:
                 linters_to_check = self.all_linters
             elif isinstance(enabled_linters, set):
                 linters_to_check = {linter for linter in self.all_linters
-                    if linter.id in enabled_linters}
+                                    if linter.id in enabled_linters}
             else:
                 raise RuntimeError(f"Unknown argument enabled_linters={enabled_linters} for lint()")
             for linter in linters_to_check:
@@ -212,11 +238,29 @@ class DataContract:
         run.finish()
 
         if self._publish_url is not None:
-            publish_datamesh_manager(run, self._publish_url)
+            try:
+                publish_datamesh_manager(run, self._publish_url)
+            except:
+                logging.error("Failed to publish to datamesh manager")
+        if self._publish_to_opentelemetry:
+            try:
+                publish_opentelemetry(run)
+            except:
+                logging.error("Failed to publish to opentelemetry")
 
         return run
 
     def breaking(self, other: 'DataContract') -> BreakingChanges:
+        return self.changelog(
+            other,
+            include_severities=[Severity.ERROR, Severity.WARNING]
+        )
+
+    def changelog(
+        self,
+        other: 'DataContract',
+        include_severities: [Severity] = (Severity.ERROR, Severity.WARNING, Severity.INFO)
+    ) -> BreakingChanges:
         old = self.get_data_contract_specification()
         new = other.get_data_contract_specification()
 
@@ -226,12 +270,14 @@ class DataContract:
             old_quality=old.quality,
             new_quality=new.quality,
             new_path=other._data_contract_file,
+            include_severities=include_severities,
         ))
 
         breaking_changes.extend(models_breaking_changes(
             old_models=old.models,
             new_models=new.models,
             new_path=other._data_contract_file,
+            include_severities=include_severities,
         ))
 
         return BreakingChanges(breaking_changes=breaking_changes)
@@ -245,15 +291,28 @@ class DataContract:
             inline_definitions=self._inline_definitions,
         )
 
-    def export(self, export_format, rdf_base: str = None) -> str:
+    def export(self, export_format, model: str = "all", rdf_base: str = None, sql_server_type: str = "auto") -> str:
         data_contract = resolve.resolve_data_contract(self._data_contract_file, self._data_contract_str,
-                                                      self._data_contract)
+                                                      self._data_contract, inline_definitions=True)
         if export_format == "jsonschema":
-            if data_contract.models is None or len(data_contract.models.items()) != 1:
-                print(f"Export to {export_format} currently only works with exactly one model in the data contract.")
-                return ""
-            model_name, model = next(iter(data_contract.models.items()))
-            return to_jsonschema_json(model_name, model)
+            if data_contract.models is None:
+                raise RuntimeError( f"Export to {export_format} requires models in the data contract.")
+
+            model_names = list(data_contract.models.keys())
+
+            if model == "all":
+                if len(data_contract.models.items()) != 1:
+                    raise RuntimeError( f"Export to {export_format} is model specific. Specify the model via --model $MODEL_NAME. Available models: {model_names}")
+
+                model_name, model_value = next(iter(data_contract.models.items()))
+                return to_jsonschema_json(model_name, model_value)
+            else:
+                model_name = model
+                model_value = data_contract.models.get(model_name)
+                if model_value is None:
+                    raise RuntimeError( f"Model {model_name} not found in the data contract. Available models: {model_names}")
+
+                return to_jsonschema_json(model_name, model_value)
         if export_format == "sodacl":
             return to_sodacl_yaml(data_contract)
         if export_format == "dbt":
@@ -261,7 +320,24 @@ class DataContract:
         if export_format == "dbt-sources":
             return to_dbt_sources_yaml(data_contract, self._server)
         if export_format == "dbt-staging-sql":
-            return to_dbt_staging_sql(data_contract)
+            if data_contract.models is None:
+                raise RuntimeError(f"Export to {export_format} requires models in the data contract.")
+
+            model_names = list(data_contract.models.keys())
+
+            if model == "all":
+                if len(data_contract.models.items()) != 1:
+                    raise RuntimeError(f"Export to {export_format} is model specific. Specify the model via --model $MODEL_NAME. Available models: {model_names}")
+
+                model_name, model_value = next(iter(data_contract.models.items()))
+                return to_dbt_staging_sql(data_contract, model_name, model_value)
+            else:
+                model_name = model
+                model_value = data_contract.models.get(model_name)
+                if model_value is None:
+                    raise RuntimeError(f"Model {model_name} not found in the data contract. Available models: {model_names}")
+
+                return to_dbt_staging_sql(data_contract, model_name, model_value)
         if export_format == "odcs":
             return to_odcs_yaml(data_contract)
         if export_format == "rdf":
@@ -269,11 +345,75 @@ class DataContract:
         if export_format == "protobuf":
             return to_protobuf(data_contract)
         if export_format == "avro":
-            if data_contract.models is None or len(data_contract.models.items()) != 1:
-                print(f"Export to {export_format} currently only works with exactly one model in the data contract.")
-                return ""
-            model_name, model = next(iter(data_contract.models.items()))
-            return to_avro_schema_json(model_name, model)
+            if data_contract.models is None:
+                raise RuntimeError(f"Export to {export_format} requires models in the data contract.")
+
+            model_names = list(data_contract.models.keys())
+
+            if model == "all":
+                if len(data_contract.models.items()) != 1:
+                    raise RuntimeError(f"Export to {export_format} is model specific. Specify the model via --model $MODEL_NAME. Available models: {model_names}")
+
+                model_name, model_value = next(iter(data_contract.models.items()))
+                return to_avro_schema_json(model_name, model_value)
+            else:
+                model_name = model
+                model_value = data_contract.models.get(model_name)
+                if model_value is None:
+                    raise RuntimeError(f"Model {model_name} not found in the data contract. Available models: {model_names}")
+
+                return to_avro_schema_json(model_name, model_value)
+        if export_format == "avro-idl":
+            return to_avro_idl(data_contract)
+        if export_format == "terraform":
+            return to_terraform(data_contract)
+        if export_format == "sql":
+            server_type = _determine_sql_server_type(data_contract, sql_server_type)
+            return to_sql_ddl(data_contract, server_type=server_type)
+        if export_format == "sql-query":
+            if data_contract.models is None:
+                raise RuntimeError(f"Export to {export_format} requires models in the data contract.")
+
+            server_type = _determine_sql_server_type(data_contract, sql_server_type)
+
+            model_names = list(data_contract.models.keys())
+
+            if model == "all":
+                if len(data_contract.models.items()) != 1:
+                    raise RuntimeError(f"Export to {export_format} is model specific. Specify the model via --model $MODEL_NAME. Available models: {model_names}")
+
+                model_name, model_value = next(iter(data_contract.models.items()))
+                return to_sql_query(data_contract, model_name, model_value, server_type)
+            else:
+                model_name = model
+                model_value = data_contract.models.get(model_name)
+                if model_value is None:
+                    raise RuntimeError(f"Model {model_name} not found in the data contract. Available models: {model_names}")
+
+                return to_sql_query(data_contract, model_name, model_value, server_type)
+
+        if export_format == "great-expectations":
+            if data_contract.models is None:
+                raise RuntimeError(f"Export to {export_format} requires models in the data contract.")
+
+            model_names = list(data_contract.models.keys())
+
+            if model == "all":
+                if len(data_contract.models.items()) != 1:
+                    raise RuntimeError(f"Export to {export_format} is model specific. Specify the model via --model "
+                                       f"$MODEL_NAME. Available models: {model_names}")
+
+                model_name, model_value = next(iter(data_contract.models.items()))
+                return to_great_expectations(data_contract, model_name)
+            else:
+                model_name = model
+                model_value = data_contract.models.get(model_name)
+                if model_value is None:
+                    raise RuntimeError(f"Model {model_name} not found in the data contract. "
+                                        f"Available models: {model_names}")
+
+                return to_great_expectations(data_contract, model_name)
+
         else:
             print(f"Export format {export_format} not supported.")
             return ""
@@ -313,6 +453,11 @@ class DataContract:
     def import_from_source(self, format: str, source: str) -> DataContractSpecification:
         data_contract_specification = DataContract.init()
 
-        data_contract_specification = import_sql(data_contract_specification, format, source)
+        if format == "sql":
+            data_contract_specification = import_sql(data_contract_specification, format, source)
+        elif format == "avro":
+            data_contract_specification = import_avro(data_contract_specification, source)
+        else:
+            print(f"Import format {format} not supported.")
 
         return data_contract_specification
