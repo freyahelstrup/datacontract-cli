@@ -69,21 +69,22 @@ def check_soda_execute(run: Run, data_contract: DataContractSpecification, serve
         if spark is None:
             spark = create_spark_session(tmp_dir)   
         logging.info("Use Spark to connect to data source")
-        data_location = server.host # TODO: Use different naming like 'location'
-        schema = spark.read \
-                    .format("csv") \
-                    .option("header", True) \
-                    .option("inferSchema", True) \
-                    .load(data_location) \
-                    .limit(10) \
-                    .schema
-        df = spark.read \
-                    .format("csv") \
-                    .option("header", True) \
-                    .schema(schema) \
-                    .load(data_location) 
-        model = data_contract.models[0] # TODO: How to find corresponding model name?
-        df.createOrReplaceTempView(model) 
+        # data_location = server.host # TODO: Use different naming like 'location'
+        # TODO: Get format from path
+        # schema = spark.read \
+        #             .format("csv") \
+        #             .option("header", True) \
+        #             .option("inferSchema", True) \
+        #             .load(data_location) \
+        #             .limit(10) \
+        #             .schema
+        # df = spark.read \
+        #             .format("csv") \
+        #             .option("header", True) \
+        #             .schema(schema) \
+        #             .load(data_location) 
+        # model = data_contract.models[0] # TODO: How to find corresponding model name?
+        # df.createOrReplaceTempView(model) 
         scan.add_spark_session(spark, data_source_name=server.type)
         scan.set_data_source_name(server.type)
     elif server.type == "kafka":
